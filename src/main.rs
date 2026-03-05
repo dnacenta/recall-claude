@@ -17,6 +17,20 @@ enum Commands {
     Init,
     /// Archive current session's conversation (called by SessionEnd hook)
     ArchiveSession,
+    /// Archive all unarchived JSONL transcripts
+    Archive {
+        /// Archive all unarchived transcripts found under ~/.claude/projects/
+        #[arg(long)]
+        all_unarchived: bool,
+    },
+    /// Search across conversation archives
+    Search {
+        /// Search query
+        query: String,
+        /// Number of context lines around each match
+        #[arg(short = 'C', long, default_value = "2")]
+        context: usize,
+    },
     /// Memory system health dashboard
     Status,
 }
@@ -26,6 +40,16 @@ fn main() {
     let result = match cli.command {
         Some(Commands::Init) | None => recall_claude::init::run(),
         Some(Commands::ArchiveSession) => recall_claude::archive::run_from_hook(),
+        Some(Commands::Archive { all_unarchived }) => {
+            if all_unarchived {
+                recall_claude::archive::archive_all_unarchived()
+            } else {
+                eprintln!("Usage: recall-claude archive --all-unarchived");
+                eprintln!("       Archives all unarchived JSONL transcripts.");
+                Ok(())
+            }
+        }
+        Some(Commands::Search { query, context }) => recall_claude::search::run(&query, context),
         Some(Commands::Status) => recall_claude::status::run(),
     };
     if let Err(e) = result {
