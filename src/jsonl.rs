@@ -380,6 +380,7 @@ pub fn extract_topics(conv: &Conversation, max_topics: usize) -> Vec<String> {
     let mut word_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     let mut user_msg_count = 0;
 
+    // Extract keywords from user messages
     for entry in &conv.entries {
         if let ConversationEntry::UserMessage(text) = entry {
             let cleaned = strip_channel_prefix(text);
@@ -394,8 +395,26 @@ pub fn extract_topics(conv: &Conversation, max_topics: usize) -> Vec<String> {
                 }
             }
             user_msg_count += 1;
-            if user_msg_count >= 3 {
+            if user_msg_count >= 5 {
                 break;
+            }
+        }
+    }
+
+    // Extract file/directory names from tool uses (high signal)
+    for entry in &conv.entries {
+        if let ConversationEntry::ToolUse { input_summary, .. } = entry {
+            // Extract meaningful path components from tool summaries
+            let summary = input_summary.trim_matches('`');
+            if let Some(basename) = summary.rsplit('/').next() {
+                let name = basename
+                    .split('.')
+                    .next()
+                    .unwrap_or(basename)
+                    .to_lowercase();
+                if name.len() >= 3 && !STOP_WORDS.contains(&name.as_str()) {
+                    *word_counts.entry(name).or_insert(0) += 2; // Boost tool targets
+                }
             }
         }
     }
