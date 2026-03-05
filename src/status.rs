@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::config;
 use crate::ephemeral;
 use crate::paths;
 
@@ -61,10 +62,12 @@ pub fn run_with_base(base: &Path) -> Result<(), String> {
     }
 
     // EPHEMERAL.md
+    let cfg = config::load(base);
+    let max_entries = cfg.ephemeral.max_entries;
     let ephemeral_path = base.join("EPHEMERAL.md");
     if ephemeral_path.exists() {
         let count = ephemeral::count_entries(&ephemeral_path).unwrap_or(0);
-        eprintln!("  EPHEMERAL       {count}/5 sessions");
+        eprintln!("  EPHEMERAL       {count}/{max_entries} sessions");
     } else {
         eprintln!("  EPHEMERAL       {DIM}not found{RESET}");
     }

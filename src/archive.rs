@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::config;
 use crate::ephemeral::{self, EphemeralEntry};
 use crate::frontmatter::Frontmatter;
 use crate::jsonl;
@@ -179,7 +180,8 @@ pub fn archive_session_with_paths(
         summary,
     };
     ephemeral::append_entry(&ephemeral_path, &entry)?;
-    ephemeral::trim_to_limit(&ephemeral_path, ephemeral::DEFAULT_MAX_ENTRIES)?;
+    let cfg = config::load(base_dir);
+    ephemeral::trim_to_limit(&ephemeral_path, cfg.ephemeral.max_entries)?;
 
     eprintln!(
         "recall-claude: archived conversation-{:03}.md ({} messages)",
@@ -187,6 +189,107 @@ pub fn archive_session_with_paths(
     );
 
     Ok(())
+}
+
+/// Archive all unarchived JSONL transcripts found under ~/.claude/projects/.
+/// Tracks which files have been archived via session IDs in existing conversation frontmatter.
+pub fn archive_all_unarchived() -> Result<(), String> {
+    let base = paths::claude_dir()?;
+    archive_all_with_base(&base)
+}
+
+pub fn archive_all_with_base(base: &Path) -> Result<(), String> {
+    let conversations_dir = base.join("conversations");
+    if !conversations_dir.exists() {
+        return Err(
+            "conversations/ directory not found. Run `recall-claude init` first.".to_string(),
+        );
+    }
+
+    // Collect already-archived session IDs from conversation frontmatter
+    let archived_sessions = collect_archived_sessions(&conversations_dir);
+
+    // Find all JSONL files under ~/.claude/projects/
+    let projects_dir = base.join("projects");
+    if !projects_dir.exists() {
+        eprintln!("No projects directory found — nothing to archive.");
+        return Ok(());
+    }
+
+    let mut jsonl_files = find_jsonl_files(&projects_dir);
+    jsonl_files.sort_by_key(|p| {
+        fs::metadata(p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+
+    let mut archived_count = 0;
+    let mut skipped_count = 0;
+
+    for jsonl_path in &jsonl_files {
+        // Extract session ID from filename (UUID.jsonl)
+        let session_id = match jsonl_path.file_stem().and_then(|s| s.to_str()) {
+            Some(id) => id.to_string(),
+            None => continue,
+        };
+
+        if archived_sessions.contains(&session_id) {
+            skipped_count += 1;
+            continue;
+        }
+
+        let path_str = jsonl_path.to_string_lossy().to_string();
+        match archive_session_with_paths(&session_id, &path_str, base) {
+            Ok(()) => archived_count += 1,
+            Err(e) => {
+                eprintln!("recall-claude: skipping {} — {}", session_id, e);
+            }
+        }
+    }
+
+    eprintln!(
+        "recall-claude: archived {archived_count} conversation{}, skipped {skipped_count} already archived",
+        if archived_count == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
+
+fn collect_archived_sessions(conversations_dir: &Path) -> std::collections::HashSet<String> {
+    let mut sessions = std::collections::HashSet::new();
+    if let Ok(entries) = fs::read_dir(conversations_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("conversation-") && name.ends_with(".md") {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    // Extract session_id from frontmatter
+                    for line in content.lines().take(15) {
+                        if let Some(sid) = line.strip_prefix("session_id: ") {
+                            sessions.insert(sid.trim().trim_matches('"').to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    sessions
+}
+
+fn find_jsonl_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(find_jsonl_files(&path));
+            } else if path.extension().is_some_and(|e| e == "jsonl") {
+                files.push(path);
+            }
+        }
+    }
+    files
 }
 
 #[cfg(test)]
