@@ -16,6 +16,14 @@ pub struct SearchResult {
     pub line: String,
 }
 
+/// A file-level ranked search result.
+pub struct RankedFile {
+    pub file: String,
+    pub match_count: usize,
+    pub score: f64,
+    pub preview_lines: Vec<String>,
+}
+
 pub fn run(query: &str, context_lines: usize) -> Result<(), String> {
     let base = paths::claude_dir()?;
     let results = search_with_base(query, &base, context_lines)?;
@@ -38,6 +46,154 @@ pub fn run(query: &str, context_lines: usize) -> Result<(), String> {
             current_file = result.file.clone();
         }
         eprintln!("  {DIM}{:>4}{RESET}  {}", result.line_num, result.line);
+    }
+
+    Ok(())
+}
+
+/// Ranked search: returns files sorted by relevance score.
+/// Score = match_count * recency_boost * content_boost
+pub fn ranked_search(
+    query: &str,
+    base: &Path,
+    max_results: usize,
+) -> Result<Vec<RankedFile>, String> {
+    let conversations_dir = base.join("conversations");
+    if !conversations_dir.exists() {
+        return Err(
+            "conversations/ directory not found. Run `recall-claude init` first.".to_string(),
+        );
+    }
+
+    let query_lower = query.to_lowercase();
+    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+    let mut ranked: Vec<RankedFile> = Vec::new();
+
+    let mut files: Vec<_> = fs::read_dir(&conversations_dir)
+        .map_err(|e| format!("Failed to read conversations directory: {e}"))?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("conversation-") && name.ends_with(".md")
+        })
+        .collect();
+    files.sort_by_key(|e| e.file_name());
+    let total_files = files.len();
+
+    for (idx, entry) in files.iter().enumerate() {
+        let content = match fs::read_to_string(entry.path()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let content_lower = content.to_lowercase();
+        let filename = entry.file_name().to_string_lossy().to_string();
+
+        // Count matches (all query words must appear for multi-word queries)
+        let all_words_present = query_words.iter().all(|w| content_lower.contains(w));
+        if !all_words_present {
+            continue;
+        }
+
+        let match_count = content_lower.matches(&query_lower).count();
+        let word_match_count: usize = if query_words.len() > 1 {
+            query_words
+                .iter()
+                .map(|w| content_lower.matches(w).count())
+                .sum()
+        } else {
+            match_count
+        };
+
+        // Recency boost: newer files score higher (linear from 0.5 to 1.0)
+        let recency = if total_files > 1 {
+            0.5 + 0.5 * (idx as f64 / (total_files - 1) as f64)
+        } else {
+            1.0
+        };
+
+        // Content boost: matches in user/assistant text score higher than frontmatter
+        let content_boost = if content_lower.contains(&format!(
+            "### user\n\n{}",
+            query_lower.chars().take(20).collect::<String>()
+        )) {
+            1.5
+        } else {
+            1.0
+        };
+
+        let score = word_match_count as f64 * recency * content_boost;
+
+        // Extract preview: first matching line
+        let mut preview_lines = Vec::new();
+        for line in content.lines() {
+            if line.to_lowercase().contains(&query_lower)
+                || (query_words.len() > 1
+                    && query_words.iter().any(|w| line.to_lowercase().contains(w)))
+            {
+                let trimmed = line.trim();
+                if !trimmed.is_empty()
+                    && !trimmed.starts_with('#')
+                    && !trimmed.starts_with("---")
+                    && !trimmed.starts_with("```")
+                {
+                    preview_lines.push(trimmed.to_string());
+                    if preview_lines.len() >= 3 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        ranked.push(RankedFile {
+            file: filename,
+            match_count: word_match_count,
+            score,
+            preview_lines,
+        });
+    }
+
+    ranked.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked.truncate(max_results);
+
+    Ok(ranked)
+}
+
+/// Run ranked search and display results.
+pub fn run_ranked(query: &str, max_results: usize) -> Result<(), String> {
+    let base = paths::claude_dir()?;
+    let results = ranked_search(query, &base, max_results)?;
+
+    if results.is_empty() {
+        eprintln!("No matches found for \"{query}\"");
+        return Ok(());
+    }
+
+    eprintln!(
+        "{BOLD}{} conversation{} matching \"{query}\"{RESET}\n",
+        results.len(),
+        if results.len() == 1 { "" } else { "s" }
+    );
+
+    for (i, result) in results.iter().enumerate() {
+        eprintln!(
+            "  {CYAN}{}. {}{RESET}  {DIM}({} matches, score {:.1}){RESET}",
+            i + 1,
+            result.file,
+            result.match_count,
+            result.score
+        );
+        for preview in &result.preview_lines {
+            let highlighted = highlight_match(preview, query);
+            eprintln!("     {highlighted}");
+        }
+        if i < results.len() - 1 {
+            eprintln!();
+        }
     }
 
     Ok(())

@@ -6,6 +6,7 @@ use crate::ephemeral::{self, EphemeralEntry};
 use crate::frontmatter::Frontmatter;
 use crate::jsonl;
 use crate::paths;
+use crate::tags;
 
 /// Scan conversations/ for highest conversation-NNN number. Returns 0 if none.
 pub fn highest_conversation_number(conversations_dir: &Path) -> u32 {
@@ -150,9 +151,11 @@ pub fn archive_session_with_paths(
         topics: topics.clone(),
     };
 
-    // Convert to markdown
+    // Convert to markdown with tags
     let md_body = jsonl::conversation_to_markdown(&conv, next_num);
-    let full_content = format!("{}\n\n{}", fm.render(), md_body);
+    let conv_tags = tags::extract_tags(&conv);
+    let tags_section = tags::format_tags_section(&conv_tags);
+    let full_content = format!("{}\n\n{}{}", fm.render(), md_body, tags_section);
 
     // Write conversation file
     let conv_file = conversations_dir.join(format!("conversation-{next_num:03}.md"));
