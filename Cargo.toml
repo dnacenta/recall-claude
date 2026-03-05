@@ -1,6 +1,6 @@
 [package]
 name = "recall-claude"
-version = "1.1.0"
+version = "2.0.0"
 edition = "2021"
 description = "Persistent three-layer memory system for Claude Code"
 license = "AGPL-3.0-only"
