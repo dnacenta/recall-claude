@@ -14,6 +14,7 @@ const ARCHIVE_TEMPLATE: &str = "# Conversation Archive\n\n\
 |---|------|---------|--------|----------|----------|\n";
 
 const ARCHIVE_SESSION_COMMAND: &str = "recall-claude archive-session";
+const CHECKPOINT_COMMAND: &str = "recall-claude checkpoint --trigger precompact";
 
 // ANSI color helpers
 const GREEN: &str = "\x1b[32m";
@@ -157,17 +158,28 @@ fn merge_hooks(settings_path: &Path) {
     };
 
     let has_archive = hook_has_command(&settings, "SessionEnd", ARCHIVE_SESSION_COMMAND);
+    let has_checkpoint = hook_has_command(&settings, "PreCompact", CHECKPOINT_COMMAND);
 
-    if has_archive {
-        print_status(Status::Exists, "SessionEnd hook already up to date");
+    if has_archive && has_checkpoint {
+        print_status(Status::Exists, "Hooks already up to date");
         return;
     }
 
-    add_hook_entry(&mut settings, "SessionEnd", ARCHIVE_SESSION_COMMAND);
-    print_status(
-        Status::Created,
-        "Added SessionEnd hook (conversation archiving)",
-    );
+    if !has_archive {
+        add_hook_entry(&mut settings, "SessionEnd", ARCHIVE_SESSION_COMMAND);
+        print_status(
+            Status::Created,
+            "Added SessionEnd hook (conversation archiving)",
+        );
+    }
+
+    if !has_checkpoint {
+        add_hook_entry(&mut settings, "PreCompact", CHECKPOINT_COMMAND);
+        print_status(
+            Status::Created,
+            "Added PreCompact hook (checkpoint before context compaction)",
+        );
+    }
 
     match serde_json::to_string_pretty(&settings) {
         Ok(json) => match fs::write(settings_path, format!("{json}\n")) {
@@ -229,8 +241,9 @@ pub fn run_with_base(base: &Path) -> Result<(), String> {
          \x20 Layer 1 (MEMORY.md)     — Curated facts, always in context\n\
          \x20 Layer 2 (EPHEMERAL.md)  — Rolling window of recent sessions\n\
          \x20 Layer 3 (Archive)       — Full conversations in ~/.claude/conversations/\n\n\
-         \x20 Hook installed:\n\
-         \x20   SessionEnd → recall-claude archive-session\n\n\
+         \x20 Hooks installed:\n\
+         \x20   SessionEnd  → recall-claude archive-session\n\
+         \x20   PreCompact  → recall-claude checkpoint\n\n\
          \x20 Start a new Claude Code session and your conversations will be remembered.\n"
     );
 
