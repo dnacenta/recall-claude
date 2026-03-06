@@ -37,6 +37,12 @@ enum Commands {
         #[arg(long, default_value = "10")]
         max_results: usize,
     },
+    /// Save a checkpoint before context compaction (called by PreCompact hook)
+    Checkpoint {
+        /// Trigger source (e.g. "precompact")
+        #[arg(long, default_value = "precompact")]
+        trigger: String,
+    },
     /// Analyze MEMORY.md and suggest distillation actions
     Distill,
     /// Memory system health dashboard
@@ -69,6 +75,7 @@ fn main() {
                 recall_claude::search::run(&query, context)
             }
         }
+        Some(Commands::Checkpoint { trigger }) => recall_claude::checkpoint::run(&trigger),
         Some(Commands::Distill) => recall_claude::distill::run(),
         Some(Commands::Status) => recall_claude::status::run(),
     };

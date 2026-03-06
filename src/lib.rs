@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod checkpoint;
 pub mod config;
 pub mod distill;
 pub mod ephemeral;

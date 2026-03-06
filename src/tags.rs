@@ -104,10 +104,7 @@ fn extract_decisions(text: &str, decisions: &mut Vec<String>) {
     let lower = text.to_lowercase();
     for marker in DECISION_MARKERS {
         if let Some(pos) = lower.find(marker) {
-            let start = text[..pos]
-                .rfind(['.', '\n'])
-                .map(|p| p + 1)
-                .unwrap_or(pos);
+            let start = text[..pos].rfind(['.', '\n']).map(|p| p + 1).unwrap_or(pos);
             let end_offset = pos + marker.len();
             let end = text[end_offset..]
                 .find(['.', '\n'])
